@@ -1,46 +1,33 @@
-const express = require(‘express’);
-const fetch = (…args) => import(‘node-fetch’).then(({default: f}) => f(…args));
+const https = require('https');
+const http = require('http');
+const url = require('url');
 
-const app = express();
 const PORT = process.env.PORT || 3000;
-const METAFIDE_BASE = ‘https://api.metafide.io’;
 
-// ── CORS headers on every response ──────────────────────
-app.use((req, res, next) => {
-res.header(‘Access-Control-Allow-Origin’, ‘*’);
-res.header(‘Access-Control-Allow-Methods’, ‘GET, POST, OPTIONS’);
-res.header(‘Access-Control-Allow-Headers’, ‘Content-Type, x-api-key, Authorization, Accept’);
-if (req.method === ‘OPTIONS’) return res.sendStatus(204);
-next();
-});
+http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization, Accept');
 
-app.use(express.json());
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204); res.end(); return;
+  }
 
-// ── Proxy all /v1/ requests to Metafide ─────────────────
-app.all(’/v1/*’, async (req, res) => {
-try {
-const targetURL = METAFIDE_BASE + req.url;
-const headers = {};
-if (req.headers[‘x-api-key’])     headers[‘x-api-key’] = req.headers[‘x-api-key’];
-if (req.headers[‘content-type’])  headers[‘Content-Type’] = req.headers[‘content-type’];
+  const target = 'https://api.metafide.io' + req.url;
+  const parsed = url.parse(target);
+  const options = {
+    hostname: parsed.hostname,
+    path: parsed.path,
+    method: req.method,
+    headers: { 'x-api-key': req.headers['x-api-key'] || '', 'Content-Type': 'application/json' }
+  };
 
-```
-const options = {
-  method: req.method,
-  headers,
-  ...(req.method !== 'GET' && { body: JSON.stringify(req.body) })
-};
+  const proxy = https.request(options, (mfRes) => {
+    res.writeHead(mfRes.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    mfRes.pipe(res);
+  });
 
-const mfRes = await fetch(targetURL, options);
-const data  = await mfRes.json().catch(() => ({}));
-res.status(mfRes.status).json(data);
-```
+  proxy.on('error', (e) => { res.writeHead(502); res.end(JSON.stringify({ error: e.message })); });
+  req.pipe(proxy);
 
-} catch (err) {
-res.status(502).json({ error: err.message });
-}
-});
-
-app.get(’/’, (req, res) => res.json({ status: ‘BlockChainBaneBot CORS Proxy running’ }));
-
-app.listen(PORT, () => console.log(`Proxy live on port ${PORT}`));
+}).listen(PORT, () => console.log('Proxy running on port ' + PORT));
